@@ -397,6 +397,47 @@ class PostGISDB(object):
         cur.execute('CLUSTER "%s" ON "%s"' % (idx_name, table_name))
         self.connection.commit()
 
+
+    def add_peak_to_grid(self, grid, peak, grid_x, grid_y):
+        rows = grid.get(grid_x)
+        if not rows:
+            rows = {}
+            grid[grid_x] = rows
+
+        columns = rows.get(grid_y)
+        if not columns:
+            columns = []
+            rows[grid_y] = columns
+
+        columns.append(peak)
+
+    def neighbour_peaks(self, grid, grid_x, grid_y):
+        return []
+
+    def update_peak_importance(self, cur, column_name, resolution):
+        all_peaks = {}
+
+        cur.execute("""SELECT id, name, type, COALESCE(ele, 0) AS ele, "summit:cross" AS has_summit_cross, ST_XMin(ST_SnapToGrid(ST_Transform(geometry, 900913), %s)) AS grid_x, ST_YMin(ST_SnapToGrid(ST_Transform(geometry, 900913), %s)) AS grid_y, ST_XMin(ST_Transform(geometry, 900913)) AS pos_x, ST_YMin(ST_Transform(geometry, 900913)) AS pos_y FROM osm_new_peaks WHERE type IN (\'peak\', \'volcano\') ORDER BY ele DESC;""", (resolution, resolution))
+        for peak in cur:
+            self.add_peak_to_grid(all_peaks, peak, int(peak[5]), int(peak[6]))
+
+        for rows in all_peaks.itervalues():
+            for columns in rows.itervalues():
+                peak = columns[0]
+                cur.execute("""UPDATE osm_new_peaks SET """ + column_name + """=1 WHERE id=%s;""", [int(peak[0])])
+
+    def simplify_peaks(self):
+        print 'simplify peaks'
+        cur = self.connection.cursor()
+        cur.execute('UPDATE osm_new_peaks SET type=\'mountain_pass\' WHERE type=\'yes\'')
+
+        self.update_peak_importance(cur, 'important1', 5000)
+        self.update_peak_importance(cur, 'important0', 10000)
+
+
+    def simplify_tables(self):
+        self.simplify_peaks()
+
     def vacuum(self):
         old_isolation_level = self.connection.isolation_level
         self.reconnect()

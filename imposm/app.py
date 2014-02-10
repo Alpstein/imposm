@@ -291,6 +291,11 @@ def main(argv=None):
             db.create_generalized_tables(mappings)
             generalized_timer.stop()
 
+            logger.message('## creating user generalized tables')
+            generalized_timer = imposm.util.Timer('generalizing user tables', logger)
+            db.simplify_tables()
+            generalized_timer.stop()
+
             logger.message('## creating union views')
             view_timer = imposm.util.Timer('creating views', logger)
             db.create_views(mappings)
@@ -327,9 +332,9 @@ def main(argv=None):
         db = DB(db_conf)
         db.swap_tables(options.table_prefix,
             options.table_prefix_production, options.table_prefix_backup)
-        db.remove_views(options.table_prefix)
-        db.db_conf.prefix = options.table_prefix_production
-        db.create_views(mappings)
+        #db.remove_views(options.table_prefix)
+        #db.db_conf.prefix = options.table_prefix_production
+        #db.create_views(mappings)
         db.commit()
 
     if options.remove_backup_tables:
