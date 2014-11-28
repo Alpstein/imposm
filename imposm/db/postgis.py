@@ -300,7 +300,7 @@ class PostGISDB(object):
 
 
         if not new_tables:
-            raise RuntimeError('did not found tables to swap')
+            raise RuntimeError('did not find tables to swap')
 
         # rename existing tables (osm_) to backup_prefix (osm_backup_)
         for table_name in existing_tables:
@@ -417,19 +417,19 @@ class PostGISDB(object):
     def update_peak_importance(self, cur, column_name, resolution):
         all_peaks = {}
 
-        cur.execute("""SELECT id, name, type, COALESCE(ele, 0) AS ele, "summit:cross" AS has_summit_cross, ST_XMin(ST_SnapToGrid(ST_Transform(geometry, 900913), %s)) AS grid_x, ST_YMin(ST_SnapToGrid(ST_Transform(geometry, 900913), %s)) AS grid_y, ST_XMin(ST_Transform(geometry, 900913)) AS pos_x, ST_YMin(ST_Transform(geometry, 900913)) AS pos_y FROM osm_new_peaks WHERE type IN (\'peak\', \'volcano\') ORDER BY ele DESC;""", (resolution, resolution))
+        cur.execute("""SELECT id, name, type, COALESCE(ele, 0) AS ele, "summit:cross" AS has_summit_cross, ST_XMin(ST_SnapToGrid(ST_Transform(geometry, 900913), %s)) AS grid_x, ST_YMin(ST_SnapToGrid(ST_Transform(geometry, 900913), %s)) AS grid_y, ST_XMin(ST_Transform(geometry, 900913)) AS pos_x, ST_YMin(ST_Transform(geometry, 900913)) AS pos_y FROM """ + self.table_prefix + """peaks WHERE type IN (\'peak\', \'volcano\') ORDER BY ele DESC;""", (resolution, resolution))
         for peak in cur:
             self.add_peak_to_grid(all_peaks, peak, int(peak[5]), int(peak[6]))
 
         for rows in all_peaks.itervalues():
             for columns in rows.itervalues():
                 peak = columns[0]
-                cur.execute("""UPDATE osm_new_peaks SET """ + column_name + """=1 WHERE id=%s;""", [int(peak[0])])
+                cur.execute("""UPDATE """ + self.table_prefix + """peaks SET """ + column_name + """=1 WHERE id=%s;""", [int(peak[0])])
 
     def simplify_peaks(self):
         print 'simplify peaks'
         cur = self.connection.cursor()
-        cur.execute('UPDATE osm_new_peaks SET type=\'mountain_pass\' WHERE type=\'yes\'')
+        cur.execute('UPDATE ' + self.table_prefix + 'peaks SET type=\'mountain_pass\' WHERE type=\'yes\'')
 
         self.update_peak_importance(cur, 'important1', 5000)
         self.update_peak_importance(cur, 'important0', 10000)
