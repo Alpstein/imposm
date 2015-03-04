@@ -80,19 +80,23 @@ class RelationBuilderBase(object):
     def build_rings(self, ways):
         rings = []
         incomplete_rings = []
+        linestring_rings = []
 
         for ring in (Ring(w) for w in ways):
-            if ring.is_closed():
+            if 'route' in self.relation.tags:
+                ring.geom = self.linestring_builder.build_geom(ring)
+                linestring_rings.append(ring)
+            elif ring.is_closed():
                 ring.geom = self.polygon_builder.build_checked_geom(ring, validate=self.validate_rings)
                 rings.append(ring)
             else:
                 incomplete_rings.append(ring)
 
         merged_rings = self.build_ring_from_incomplete(incomplete_rings)
-        if len(rings) + len(merged_rings) == 0:
+        if len(rings) + len(merged_rings) + len(linestring_rings) == 0:
             raise IncompletePolygonError('linestrings from relation %s have no rings' % (self.relation.osm_id, ))
 
-        return rings + merged_rings
+        return rings + merged_rings + linestring_rings
 
     def build_ring_from_incomplete(self, incomplete_rings):
 
@@ -218,59 +222,64 @@ class ContainsRelationBuilder(RelationBuilderBase):
         """
         Build relation geometry from rings.
         """
-        rings.sort(key=lambda x: x.geom.area, reverse=True)
-        total_rings = len(rings)
+        islines = ('route' in self.relation.tags)
+        if islines:
+            self.relation.geom = shapely.ops.linemerge([ring.geom for ring in rings])
+            for ring in rings:
+                ring.mark_as_inserted(self.relation.tags)
+        else: # not a route relation / other types besides LineString/MultiLineString, eg. LinearRing
+            rings.sort(key=lambda x: x.geom.area, reverse=True)
+            total_rings = len(rings)
+            shells = set([rings[0]])
+            for i in xrange(total_rings):
+                test_geom = shapely.prepared.prep(rings[i].geom)
+                for j in xrange(i+1, total_rings):
+                    if test_geom.contains(rings[j].geom):
+                        # j in inside of i
+                        if rings[j].contained_by is not None:
+                            # j is inside a larger ring, remove that relationship
+                            # e.g. j is hole inside a hole (i)
+                            rings[rings[j].contained_by].holes.discard(rings[j])
+                            shells.discard(rings[j])
+                        
+                        # remember parent
+                        rings[j].contained_by = i
+                        
+                        # add ring as hole or shell
+                        if self._ring_is_hole(rings, j):
+                            rings[i].holes.add(rings[j])
+                        else:
+                            shells.add(rings[j])
+                if rings[i].contained_by is None:
+                    # add as shell if it is not a hole
+                    shells.add(rings[i])
+            
+            rel_tags = relation_tags(self.relation.tags, rings[0].tags)
+            
+            # build polygons from rings
+            polygons = []
+            for shell in shells:
+                shell.mark_as_inserted(rel_tags)
+                exterior = shell.geom.exterior
+                interiors = []
+                for hole in shell.holes:
+                    hole.mark_as_inserted(rel_tags)
+                    interiors.append(hole.geom.exterior)
+                
+                polygons.append(shapely.geometry.Polygon(exterior, interiors))
+                
+            if len(polygons) == 1:
+                geom = polygons[0]
+            else:
+                geom = shapely.geometry.MultiPolygon(polygons)
+            
+            geom = imposm.geom.validate_and_simplify(geom)
+            if not geom.is_valid:
+                raise InvalidGeometryError('multipolygon relation (%s) result is invalid' %
+                                           self.relation.osm_id)
+            self.relation.geom = geom
+            self.relation.tags = rel_tags
 
-        shells = set([rings[0]])
-
-        for i in xrange(total_rings):
-            test_geom = shapely.prepared.prep(rings[i].geom)
-            for j in xrange(i+1, total_rings):
-                if test_geom.contains(rings[j].geom):
-                    # j in inside of i
-                    if rings[j].contained_by is not None:
-                        # j is inside a larger ring, remove that relationship
-                        # e.g. j is hole inside a hole (i)
-                        rings[rings[j].contained_by].holes.discard(rings[j])
-                        shells.discard(rings[j])
-
-                    # remember parent
-                    rings[j].contained_by = i
-
-                    # add ring as hole or shell
-                    if self._ring_is_hole(rings, j):
-                        rings[i].holes.add(rings[j])
-                    else:
-                        shells.add(rings[j])
-            if rings[i].contained_by is None:
-                # add as shell if it is not a hole
-                shells.add(rings[i])
-
-        rel_tags = relation_tags(self.relation.tags, rings[0].tags)
-
-        # build polygons from rings
-        polygons = []
-        for shell in shells:
-            shell.mark_as_inserted(rel_tags)
-            exterior = shell.geom.exterior
-            interiors = []
-            for hole in shell.holes:
-                hole.mark_as_inserted(rel_tags)
-                interiors.append(hole.geom.exterior)
-
-            polygons.append(shapely.geometry.Polygon(exterior, interiors))
-
-        if len(polygons) == 1:
-            geom = polygons[0]
-        else:
-            geom = shapely.geometry.MultiPolygon(polygons)
-
-        geom = imposm.geom.validate_and_simplify(geom)
-        if not geom.is_valid:
-            raise InvalidGeometryError('multipolygon relation (%s) result is invalid' %
-                                       self.relation.osm_id)
-        self.relation.geom = geom
-        self.relation.tags = rel_tags
         all_ways = []
         for r in rings:
             all_ways.extend(r.ways)
