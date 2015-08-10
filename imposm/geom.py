@@ -15,6 +15,8 @@
 from __future__ import division
 
 import math
+import codecs
+import os
 import shapely.geometry
 import shapely.geos
 import shapely.prepared
@@ -30,7 +32,7 @@ except ImportError:
     rtree = None
 
 from imposm import config
-from imposm.util.geom import load_datasource, build_multipolygon
+from imposm.util.geom import load_polygons, load_datasource, build_multipolygon
 
 import logging
 log = logging.getLogger(__name__)
@@ -164,8 +166,8 @@ class LineStringBuilder(GeomBuilder):
         return 'LINESTRING(' + ', '.join('%f %f' % p for p in data) + ')'
 
     def check_geom_type(self, geom):
-        if geom.type not in ('LineString', 'MultiLineString'):
-            raise InvalidGeometryError('expected LineString or MultiLineString, got %s' % geom.type)
+        if geom.type != 'LineString':
+            raise InvalidGeometryError('expected LineString, got %s' % geom.type)
 
     def to_geom(self, data, max_length=None):
         if len(data) <= 1:
@@ -176,7 +178,7 @@ class LineStringBuilder(GeomBuilder):
             max_length = config.imposm_linestring_max_length
         if max_length and len(data) > max_length:
             chunks = math.ceil(len(data) / max_length)
-            length = int((len(data)-1) // chunks) + 1
+            length = int(len(data) // chunks)
             lines = []
             for i in xrange(1, len(data), length):
                 lines.append(geometry.LineString(data[i-1:i+length]))
